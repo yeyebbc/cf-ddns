@@ -10,18 +10,26 @@ CF_API_TOKEN="your-api-token-here"
 # Zone ID（在 Cloudflare 域名概览页面右侧可找到）
 CF_ZONE_ID="your-zone-id-here"
 
-# 要更新的完整域名（例如: ddns.example.com）
-CF_RECORD_NAME="ddns.example.com"
+# 要更新的域名列表（空格分隔）
+# 格式: 域名[:TTL[:proxied]]
+# 不指定 TTL 和 proxied 则使用下方的全局默认值
+CF_RECORDS="ddns1.example.com ddns2.example.com:300 ddns3.example.com:120:true"
 
 # --- 可选配置 ----------------------------------------------------------------
+# 空格分隔多个域名：
+# 最简单：多个域名，共享默认 TTL(120) 和 proxied(false)                                                     
+CF_RECORDS="ddns1.example.com ddns2.example.com"
+# 单独指定 TTL 或 proxied                                                                                   
+CF_RECORDS="ipv6.home.arpa:120:false vpn.home.arpa:60:true"
+# 格式为 域名[:TTL[:proxied]]，未指定的字段使用全局默认值。
+# 兼容性 — 旧的 CF_RECORD_NAME 单域名配置仍然有效，脚本自动将其转为 CF_RECORDS
 
-# TTL（秒），默认 120（推荐 120-600）
+# 全局默认 TTL（秒），当域名未单独指定时使用，默认 120
 # CF_RECORD_TTL=120
 
-# 是否启用 Cloudflare CDN 代理（橙色云朵）
-# 对于 DDNS 建议设为 false（仅 DNS 解析）
+# 全局默认 proxied，当域名未单独指定时使用，默认 false
 # CF_RECORD_PROXIED=false
 
-# 指定网卡名称，留空则自动检测（ping NAS 通常为 eth0、eth1、bond0 等）
+# 指定网卡名称，留空则自动检测（QNAP NAS 通常为 eth0、eth1、bond0 等）
 # 若脚本无法获取 IPv6，请在 NAS 终端执行 ifconfig 确认网卡名后指定
 # CF_INTERFACE="eth0"

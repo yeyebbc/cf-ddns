@@ -32,7 +32,7 @@ fi
 source "$CONFIG_FILE"
 
 # 校验必填配置项
-required_vars=("CF_API_TOKEN" "CF_ZONE_ID" "CF_RECORD_NAME")
+required_vars=("CF_API_TOKEN" "CF_ZONE_ID")
 for var in "${required_vars[@]}"; do
     if [[ -z "${!var:-}" ]]; then
         log_err "缺少必填配置项: $var"
@@ -40,10 +40,32 @@ for var in "${required_vars[@]}"; do
     fi
 done
 
-# 可选配置项默认值
+# 兼容旧版单域名配置 CF_RECORD_NAME
+if [ -n "${CF_RECORD_NAME:-}" ] && [ -z "${CF_RECORDS:-}" ]; then
+    CF_RECORDS="$CF_RECORD_NAME"
+fi
+
+if [ -z "${CF_RECORDS:-}" ]; then
+    log_err "缺少必填配置项: CF_RECORDS（要更新的域名列表，空格分隔）"
+    exit 1
+fi
+
+# 全局默认值（可被每条记录单独覆盖）
 CF_RECORD_TTL="${CF_RECORD_TTL:-120}"
 CF_RECORD_PROXIED="${CF_RECORD_PROXIED:-false}"
 CF_INTERFACE="${CF_INTERFACE:-}"  # 指定网卡，留空则自动检测
+
+# 解析单条记录 "domain[:ttl[:proxied]]"，输出 "domain ttl proxied"
+parse_record() {
+    local entry="$1"
+    local name ttl proxied
+    name=$(echo "$entry" | cut -d: -f1)
+    ttl=$(echo "$entry" | cut -d: -f2)
+    proxied=$(echo "$entry" | cut -d: -f3)
+    [ -z "$ttl" ] && ttl="$CF_RECORD_TTL"
+    [ -z "$proxied" ] && proxied="$CF_RECORD_PROXIED"
+    echo "$name $ttl $proxied"
+}
 
 # --- 获取当前 IPv6 地址 -------------------------------------------------------
 
@@ -218,6 +240,8 @@ update_dns_record() {
     local record_id="$1"
     local record_name="$2"
     local ip="$3"
+    local ttl="$4"
+    local proxied="$5"
     local resp
 
     local data
@@ -226,8 +250,8 @@ update_dns_record() {
     "type": "AAAA",
     "name": "$record_name",
     "content": "$ip",
-    "ttl": $CF_RECORD_TTL,
-    "proxied": $CF_RECORD_PROXIED
+    "ttl": $ttl,
+    "proxied": $proxied
 }
 EOF
 )
@@ -268,6 +292,8 @@ parse_cf_error() {
 create_dns_record() {
     local record_name="$1"
     local ip="$2"
+    local ttl="$3"
+    local proxied="$4"
     local resp
 
     local data
@@ -276,8 +302,8 @@ create_dns_record() {
     "type": "AAAA",
     "name": "$record_name",
     "content": "$ip",
-    "ttl": $CF_RECORD_TTL,
-    "proxied": $CF_RECORD_PROXIED
+    "ttl": $ttl,
+    "proxied": $proxied
 }
 EOF
 )
@@ -298,45 +324,77 @@ EOF
     echo "$id"
 }
 
+# --- 状态文件操作 --------------------------------------------------------------
+
+# 状态文件格式: 每行 "domain=ip"
+read_last_ip() {
+    local domain="$1"
+    [ ! -f "$STATE_FILE" ] && return 1
+    grep "^${domain}=" "$STATE_FILE" 2>/dev/null | cut -d= -f2-
+}
+
+write_last_ip() {
+    local domain="$1"
+    local ip="$2"
+    local tmpfile="${STATE_FILE}.tmp"
+
+    if [ -f "$STATE_FILE" ]; then
+        grep -v "^${domain}=" "$STATE_FILE" 2>/dev/null > "$tmpfile" || true
+    fi
+    echo "${domain}=${ip}" >> "$tmpfile"
+    mv "$tmpfile" "$STATE_FILE"
+}
+
 # --- 主流程 -------------------------------------------------------------------
 
 main() {
-    # 获取当前 IPv6 地址
+    # 获取当前 IPv6 地址（所有域名共享同一 IPv6）
     local current_ip
     current_ip=$(get_ipv6) || exit 1
     log "当前 IPv6 地址: $current_ip"
 
-    # 读取上次记录的地址
-    local last_ip=""
-    if [[ -f "$STATE_FILE" ]]; then
-        last_ip=$(cat "$STATE_FILE" 2>/dev/null || true)
+    local has_changes=0
+
+    # 遍历所有域名
+    for entry in $CF_RECORDS; do
+        local name ttl proxied
+        set -- $(parse_record "$entry")
+        name="$1" ttl="$2" proxied="$3"
+
+        log "--- 处理 $name ---"
+
+        # 读取该域名上次的 IP
+        local last_ip
+        last_ip=$(read_last_ip "$name") || true
+
+        if [ "$current_ip" = "$last_ip" ]; then
+            log "$name: 地址未变化，跳过"
+            continue
+        fi
+
+        has_changes=1
+        log "$name: 地址已变化: ${last_ip:-<无>} -> $current_ip"
+
+        # 查找现有 AAAA 记录
+        local record_id
+        record_id=$(find_aaaa_record "$name") || continue
+
+        if [ -n "$record_id" ]; then
+            log "$name: 找到记录 $record_id，执行更新..."
+            update_dns_record "$record_id" "$name" "$current_ip" "$ttl" "$proxied" || continue
+            log "$name: 更新成功"
+        else
+            log "$name: 未找到记录，执行创建..."
+            record_id=$(create_dns_record "$name" "$current_ip" "$ttl" "$proxied") || continue
+            log "$name: 创建成功 (ID: $record_id)"
+        fi
+
+        write_last_ip "$name" "$current_ip"
+    done
+
+    if [ "$has_changes" -eq 0 ]; then
+        log "所有域名地址均未变化"
     fi
-
-    # 如果地址未变化，无需更新
-    if [[ "$current_ip" == "$last_ip" ]]; then
-        log "IPv6 地址未变化，无需更新"
-        exit 0
-    fi
-
-    log "IPv6 地址已变化: ${last_ip:-<无>} -> $current_ip"
-
-    # 查找现有 AAAA 记录
-    local record_id
-    record_id=$(find_aaaa_record "$CF_RECORD_NAME") || exit 1
-
-    if [[ -n "$record_id" ]]; then
-        log "找到现有 DNS 记录: $record_id，执行更新..."
-        update_dns_record "$record_id" "$CF_RECORD_NAME" "$current_ip" || exit 1
-        log "DNS 记录更新成功"
-    else
-        log "未找到现有 DNS 记录，执行创建..."
-        record_id=$(create_dns_record "$CF_RECORD_NAME" "$current_ip") || exit 1
-        log "DNS 记录创建成功，ID: $record_id"
-    fi
-
-    # 保存当前地址
-    echo "$current_ip" > "$STATE_FILE"
-    log "IPv6 地址已保存到状态文件"
 }
 
 main
