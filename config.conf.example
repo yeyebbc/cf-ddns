@@ -1,0 +1,27 @@
+#===============================================================================
+# cf-ddns 配置文件
+# 将此文件重命名为 config.conf 并填入你的 Cloudflare 信息
+#===============================================================================
+
+# Cloudflare API Token（需要 DNS 编辑权限）
+# 在 https://dash.cloudflare.com/profile/api-tokens 创建
+CF_API_TOKEN="your-api-token-here"
+
+# Zone ID（在 Cloudflare 域名概览页面右侧可找到）
+CF_ZONE_ID="your-zone-id-here"
+
+# 要更新的完整域名（例如: ddns.example.com）
+CF_RECORD_NAME="ddns.example.com"
+
+# --- 可选配置 ----------------------------------------------------------------
+
+# TTL（秒），默认 120（推荐 120-600）
+# CF_RECORD_TTL=120
+
+# 是否启用 Cloudflare CDN 代理（橙色云朵）
+# 对于 DDNS 建议设为 false（仅 DNS 解析）
+# CF_RECORD_PROXIED=false
+
+# 指定网卡名称，留空则自动检测（ping NAS 通常为 eth0、eth1、bond0 等）
+# 若脚本无法获取 IPv6，请在 NAS 终端执行 ifconfig 确认网卡名后指定
+# CF_INTERFACE="eth0"

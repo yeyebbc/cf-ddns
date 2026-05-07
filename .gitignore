@@ -1,0 +1,14 @@
+# 配置文件（含 API Token 等敏感信息）
+config.conf
+
+# 日志文件
+*.log
+
+# 运行时状态文件
+.cf-ddns-state
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
